@@ -118,7 +118,7 @@ def read_excel_and_generate_sankey_data(file_input):
     return data_raw, all_nodes, original_total_incoming
 
 # ===================== 3. 应用标题 =====================
-st.title("🤝 联盟营销平台转化链路分析")
+st.title("联盟营销平台转化链路分析")
 st.markdown("---")
 
 # 初始化session state
@@ -518,4 +518,5 @@ with st.expander("📋 查看详细数据"):
 st.markdown("---")
 st.caption(f"📅 数据更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 st.caption("💡 提示：修改Excel文件后，重新上传即可更新图表")
+
 
