@@ -1,11 +1,11 @@
 # sankeyyingxiao_streamlit.py
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.utils
 import logging
 import streamlit as st
 from datetime import datetime
-import json
+import os
+from io import BytesIO
 
 # ===================== 1. 页面配置和基础配置 =====================
 st.set_page_config(
@@ -42,15 +42,30 @@ GROUP_COLORS = {
 
 # ===================== 2. 读取Excel+生成专属合作数量链路 =====================
 @st.cache_data
-def read_excel_and_generate_sankey_data(file_path):
+def read_excel_and_generate_sankey_data(file_input):
+    """
+    读取Excel数据并生成桑基图所需格式
+    
+    参数:
+    file_input: 可以是文件路径字符串，也可以是UploadedFile对象
+    """
     try:
-        df = pd.read_excel(file_path)
-        logger.info(f"✅ 成功读取Excel文件，共{len(df)}行数据")
+        # 判断输入类型
+        if isinstance(file_input, str):
+            # 如果是字符串，认为是文件路径
+            df = pd.read_excel(file_input, engine='openpyxl')
+            logger.info(f"✅ 成功从文件路径读取Excel，共{len(df)}行数据")
+        else:
+            # 如果是UploadedFile对象，需要先读取为字节流
+            bytes_data = file_input.getvalue()
+            df = pd.read_excel(BytesIO(bytes_data), engine='openpyxl')
+            logger.info(f"✅ 成功从上传文件读取Excel，共{len(df)}行数据")
+        
     except Exception as e:
         logger.error(f"❌ 读取Excel失败：{str(e)}")
         st.error(f"❌ 读取Excel失败：{str(e)}")
         return [], [], {}
-
+    
     data_raw = []
     all_nodes = []
 
@@ -118,25 +133,22 @@ with st.sidebar:
     uploaded_file = st.file_uploader("上传Excel文件", type=["xlsx", "xls"])
     
     # 搜索区域
-    search_keyword = st.text_input(
+    search_input = st.text_input(
         "🔍 链路搜索（支持平台类型/节点关键词）",
-        value=st.session_state.search_keyword,
+        value=st.session_state.get("search_keyword", ""),
         placeholder="输入关键词（如：红人、联盟客、总clicks...）",
         help="支持平台类型或节点关键词搜索"
     )
     
     # 更新session state
-    st.session_state.search_keyword = search_keyword
+    if search_input != st.session_state.get("search_keyword", ""):
+        st.session_state.search_keyword = search_input
     
-    # 清空搜索按钮 - 修复API弃用警告
+    # 清空搜索按钮
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🗑️ 清空搜索", type="secondary", use_container_width=True):
             st.session_state.search_keyword = ""
-            st.rerun()
-    
-    with col2:
-        if st.button("🔄 刷新数据", type="primary", use_container_width=True):
             st.rerun()
     
     st.markdown("---")
@@ -201,15 +213,19 @@ with st.sidebar:
 # 确定Excel文件路径
 if uploaded_file is not None:
     # 如果有上传的文件，使用上传的文件
-    EXCEL_FILE_PATH = uploaded_file
+    sankey_data, all_nodes, original_total_incoming = read_excel_and_generate_sankey_data(uploaded_file)
     st.success(f"📂 已上传文件: {uploaded_file.name}")
 else:
-    # 否则使用默认文件（本地测试时）
-    EXCEL_FILE_PATH = "ACC活动表现看盘2026.1.26.xlsx"
+    # 否则使用默认文件
+    default_file = "ACC活动表现看盘2026.1.26.xlsx"
+    if os.path.exists(default_file):
+        sankey_data, all_nodes, original_total_incoming = read_excel_and_generate_sankey_data(default_file)
+        st.info("📁 使用默认Excel文件")
+    else:
+        st.warning("⚠️ 未找到默认Excel文件，请上传文件")
+        st.stop()
 
-# 加载数据
 try:
-    sankey_data, all_nodes, original_total_incoming = read_excel_and_generate_sankey_data(EXCEL_FILE_PATH)
     df_sankey = pd.DataFrame(sankey_data, columns=["source", "target", "value", "group"])
     df_sankey["value"] = pd.to_numeric(df_sankey["value"], errors="coerce").fillna(0.0)
     
@@ -237,8 +253,9 @@ with st.expander("📊 数据摘要", expanded=False):
 
 # 数据筛选
 df_filtered = df_sankey.copy()
-if st.session_state.search_keyword and st.session_state.search_keyword.strip():
-    kw = st.session_state.search_keyword.strip().lower()
+search_keyword = st.session_state.get("search_keyword", "")
+if search_keyword and search_keyword.strip():
+    kw = search_keyword.strip().lower()
     df_filtered = df_filtered[
         df_filtered["source"].str.lower().str.contains(kw) |
         df_filtered["target"].str.lower().str.contains(kw) |
@@ -341,8 +358,9 @@ for node in all_nodes_sorted:
 
 # 匹配搜索关键词
 matched_platforms = []
-if st.session_state.search_keyword and st.session_state.search_keyword.strip():
-    kw = st.session_state.search_keyword.strip().lower()
+search_keyword = st.session_state.get("search_keyword", "")
+if search_keyword and search_keyword.strip():
+    kw = search_keyword.strip().lower()
     matched_platforms = [p for p in platform_nodes if kw in p.lower()]
 
 matched_nodes = []
@@ -389,7 +407,7 @@ for _, row in df_agg.iterrows():
     # 检查是否匹配搜索
     is_matched = group in matched_platforms
     final_val = original_val * scale_factor
-    if not is_matched and st.session_state.search_keyword and st.session_state.search_keyword.strip():
+    if not is_matched and search_keyword and search_keyword.strip():
         final_val = final_val * 0.05
 
     # 计算链路百分比（使用原始总流入数据）
@@ -399,7 +417,7 @@ for _, row in df_agg.iterrows():
     # 确定颜色
     if is_matched:
         final_color = GROUP_COLORS.get(group, GROUP_COLORS.get(source_str, GROUP_COLORS["默认"]))
-    elif st.session_state.search_keyword and st.session_state.search_keyword.strip():
+    elif search_keyword and search_keyword.strip():
         final_color = "rgba(200, 200, 200, 0.2)"
     else:
         final_color = GROUP_COLORS.get(group, GROUP_COLORS.get(source_str, GROUP_COLORS["默认"]))
@@ -413,7 +431,7 @@ for _, row in df_agg.iterrows():
 # 节点颜色
 node_color_list = []
 for node in all_nodes_sorted:
-    if node in matched_nodes or not st.session_state.search_keyword or not st.session_state.search_keyword.strip():
+    if node in matched_nodes or not search_keyword or not search_keyword.strip():
         if node in GROUP_COLORS:
             node_color = GROUP_COLORS[node]
         elif "合作数量" in node:
@@ -454,20 +472,19 @@ fig = go.Figure(data=[go.Sankey(
 
 # 添加标题
 title_text = "联盟营销平台转化链路"
-if st.session_state.search_keyword and st.session_state.search_keyword.strip():
-    title_text += f" | 搜索：{st.session_state.search_keyword}"
+if search_keyword and search_keyword.strip():
+    title_text += f" | 搜索：{search_keyword}"
 
 fig.update_layout(
     title_text=title_text,
     font_size=12,
     autosize=True,
-    font_color="pink",
     margin=dict(l=20, r=20, t=50, b=20),
     font=dict(family="Microsoft YaHei"),
     height=800
 )
 
-# 显示图表 - 修复API弃用警告
+# 显示图表
 st.plotly_chart(fig, use_container_width=True, height=800)
 
 # ===================== 8. 数据显示区域 =====================
@@ -501,7 +518,3 @@ with st.expander("📋 查看详细数据"):
 st.markdown("---")
 st.caption(f"📅 数据更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 st.caption("💡 提示：修改Excel文件后，重新上传即可更新图表")
-
-# ===================== 10. 正确运行方式 =====================
-# 不要在IDE中直接运行这个文件
-# 使用命令行：streamlit run sankeyyingxiao_streamlit.py
