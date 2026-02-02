@@ -518,3 +518,4 @@ with st.expander("📋 查看详细数据"):
 st.markdown("---")
 st.caption(f"📅 数据更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 st.caption("💡 提示：修改Excel文件后，重新上传即可更新图表")
+
